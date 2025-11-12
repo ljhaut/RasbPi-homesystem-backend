@@ -1,4 +1,6 @@
+import asyncio
 import time
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,8 +10,19 @@ from core.config import app_settings
 from core.logging_config import setup_logger
 from endpoints.api.v1.electricity import electricity_router
 from endpoints.health import health_router
+from services.electricity_monitor_service import ElectricityMonitorService
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    monitor_service = ElectricityMonitorService()
+    asyncio.create_task(monitor_service.start())
+    yield
+    if monitor_service and monitor_service.is_running:
+        await monitor_service.stop()
+
+
+app = FastAPI(lifespan=lifespan)
 logger = setup_logger()
 
 app.add_middleware(

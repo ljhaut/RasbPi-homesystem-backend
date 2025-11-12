@@ -1,0 +1,30 @@
+{
+  "name": "Pico Dev Environment",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "fast-api",
+  "workspaceFolder": "/workspace",
+  "forwardPorts": [8000],
+  "postCreateCommand": "",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.black-formatter",
+        "ms-python.isort",
+        "openai.chatgpt"
+      ],
+      "settings": {
+        "terminal.integrated.shell.linux": "/bin/bash",
+        "python.formatting.provider": "none",
+        "[python]": {
+          "editor.defaultFormatter": "ms-python.black-formatter",
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+          }
+        },
+        "isort.args": ["--profile", "black"]
+      }
+    }
+  }
+}

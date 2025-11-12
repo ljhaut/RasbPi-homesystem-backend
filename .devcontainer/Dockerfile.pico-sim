@@ -1,0 +1,10 @@
+FROM python:3.13-slim
+
+WORKDIR /workspace
+
+RUN apt-get update && apt-get install -y socat && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN pip install pyserial
+
+COPY pico_sim/ ./pico_sim/

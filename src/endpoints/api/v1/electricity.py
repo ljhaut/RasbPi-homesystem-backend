@@ -10,4 +10,4 @@ electricity_router = APIRouter(
 @electricity_router.get("/prices")
 async def get_electricity_prices_endpoint():
 
-    return get_electricity_prices()
+    return await get_electricity_prices()

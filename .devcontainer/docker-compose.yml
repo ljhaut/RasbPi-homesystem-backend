@@ -1,0 +1,39 @@
+version: "3.8"
+
+services:
+  pico-sim:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile.pico-sim
+    command: ["python", "-m", "pico_sim.simulator"]
+    privileged: true
+    volumes:
+      - /dev/pts:/dev/pts
+      - ..:/workspace:cached
+    tty: true
+    environment:
+      - NUM_PICOS=2
+    healthcheck:
+      test: ["CMD", "sh", "-c", "test -f /workspace/pico_sim.env"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+
+  fast-api:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile.fast-api
+    depends_on:
+      pico-sim:
+        condition: service_healthy
+    volumes:
+      - ..:/workspace:cached
+      - /dev/pts:/dev/pts
+    ports:
+      - "8000:8000"
+    command: ["python", "src/main.py"]
+    privileged: true
+    tty: true
+    working_dir: /workspace
+    env_file:
+      - ../pico_sim.env
