@@ -7,3 +7,9 @@ The software controls relays that are connected to the raspberry pi through rasp
 Pico connection serial ports:
 /dev/ttyACM0
 /dev/ttyACM1
+
+For dev make a venv with `python3.13 -m venv .venv`\
+Open venv with `source .venv/bin/activate`\
+Within venv do `pip3 install -r requirements.txt -r manual_reqs.txt`
+
+Create a .env with values from .env.example for the project to run. Fill in the entso-e api key

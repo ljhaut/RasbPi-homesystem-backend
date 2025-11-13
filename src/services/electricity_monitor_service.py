@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from typing import List, Optional
 from zoneinfo import ZoneInfo
 
@@ -37,9 +37,11 @@ class ElectricityMonitorService:
                 now.date(), time(14, 0), tzinfo=ZoneInfo("Europe/Helsinki")
             )  # 14:00 today
             if now >= target_time:
+                next_day = (now + timedelta(days=1)).date()
                 target_time = datetime.combine(
-                    now.date(tz=ZoneInfo("Europe/Helsinki")).replace(day=now.day + 1),
+                    next_day,
                     time(14, 0),
+                    tzinfo=ZoneInfo("Europe/Helsinki"),
                 )
             if self.current_prices is None:
                 try:
