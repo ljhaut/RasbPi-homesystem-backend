@@ -1,5 +1,5 @@
 {
-  "name": "Pico Dev Environment",
+  "name": "Rasbpi homesystems dev environment",
   "dockerComposeFile": "docker-compose.yml",
   "service": "fast-api",
   "workspaceFolder": "/workspace",

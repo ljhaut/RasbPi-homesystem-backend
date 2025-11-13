@@ -2,12 +2,12 @@ import asyncio
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from requests import Response
 
 from core.config import app_settings
 from core.logging_config import setup_logger
+from db.base import engine
 from endpoints.api.v1.electricity import electricity_router
 from endpoints.health import health_router
 from services.electricity_monitor_service import ElectricityMonitorService

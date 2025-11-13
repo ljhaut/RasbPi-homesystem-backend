@@ -26,6 +26,8 @@ services:
     depends_on:
       pico-sim:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     volumes:
       - ..:/workspace:cached
       - /dev/pts:/dev/pts
@@ -37,3 +39,24 @@ services:
     working_dir: /workspace
     env_file:
       - ../pico_sim.env
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: rasbpi-db-user 
+      POSTGRES_PASSWORD: raspbi-db-password
+      POSTGRES_DB: rasbpi-db
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rasbpi-db-user -d rasbpi-db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-data:

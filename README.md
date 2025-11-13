@@ -8,6 +8,13 @@ Pico connection serial ports:
 /dev/ttyACM0
 /dev/ttyACM1
 
+pipreqs: `pipreqs . --force --encoding utf-8`
+
+alembic:
+- `alembic revision --autogenerate -m "msg"`
+- `alembic upgrade head`
+- `alembic downgrade -1`
+
 For dev make a venv with `python3.13 -m venv .venv`\
 Open venv with `source .venv/bin/activate`\
 Within venv do `pip3 install -r requirements.txt -r manual_reqs.txt`
