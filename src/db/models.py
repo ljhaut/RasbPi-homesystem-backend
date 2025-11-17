@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import datetime
 
 from sqlmodel import Field, SQLModel
 
@@ -8,4 +8,4 @@ class ElectricityPrices(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     price_amount_mwh_eur: float = Field(index=True, nullable=False)
-    timestamp: date = Field(index=True, nullable=False)
+    timestamp: datetime = Field(index=True, nullable=False)

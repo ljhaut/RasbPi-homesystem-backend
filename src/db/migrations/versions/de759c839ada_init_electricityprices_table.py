@@ -23,7 +23,7 @@ def upgrade() -> None:
         "electricity_prices",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column("price_amount_mwh_eur", sa.Float(), nullable=False, index=True),
-        sa.Column("timestamp", sa.Date(), nullable=False, index=True),
+        sa.Column("timestamp", sa.DateTime(), nullable=False, index=True),
     )
 
 

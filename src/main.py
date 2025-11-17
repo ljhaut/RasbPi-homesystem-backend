@@ -2,28 +2,35 @@ import asyncio
 import time
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.config import app_settings
 from core.logging_config import setup_logger
-from db.base import engine
 from endpoints.api.v1.electricity import electricity_router
 from endpoints.health import health_router
 from services.electricity_monitor_service import ElectricityMonitorService
 
+logger = setup_logger()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    monitor_service = ElectricityMonitorService()
+    app.state.http_client = httpx.AsyncClient(timeout=60.0)
+    logger.info("HTTP client initialized")
+
+    monitor_service = ElectricityMonitorService(app.state.http_client)
     asyncio.create_task(monitor_service.start())
+
     yield
+
     if monitor_service and monitor_service.is_running:
         await monitor_service.stop()
+    await app.state.http_client.aclose()
 
 
 app = FastAPI(lifespan=lifespan)
-logger = setup_logger()
 
 app.add_middleware(
     CORSMiddleware,

@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends
+import httpx
+from fastapi import APIRouter, Depends, Request
 from sqlmodel import Session
 
 from db.base import get_session
@@ -13,7 +14,10 @@ electricity_router = APIRouter(
 
 
 @electricity_router.get("/prices")
-async def get_electricity_prices_endpoint(session: Session = Depends(get_session)):
-    prices = await get_electricity_prices()
+async def get_electricity_prices_endpoint(
+    req: Request, session: Session = Depends(get_session)
+):
+    client: httpx.AsyncClient = req.app.state.http_client
+    prices = await get_electricity_prices(client)
     await save_electricity_prices_to_db(prices, session)
     return prices

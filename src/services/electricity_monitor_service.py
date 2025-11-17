@@ -3,6 +3,8 @@ from datetime import datetime, time, timedelta
 from typing import List, Optional
 from zoneinfo import ZoneInfo
 
+import httpx
+
 from controllers.pico_controller import PicoController
 from core.config import app_settings
 from core.logging_config import setup_logger
@@ -13,7 +15,12 @@ logger = setup_logger()
 
 
 class ElectricityMonitorService:
-    def __init__(self, pico_controller: Optional[PicoController] = None):
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        pico_controller: Optional[PicoController] = None,
+    ):
+        self.client = client
         # self.pico_controller = pico_controller or PicoController()
         self.is_running = False
         self.current_prices: Optional[ElectricityPriceResponse] = None
@@ -45,7 +52,7 @@ class ElectricityMonitorService:
                 )
             if self.current_prices is None:
                 try:
-                    self.current_prices = await get_electricity_prices()
+                    self.current_prices = await get_electricity_prices(self.client)
                     logger.info("Successfully fetched new electricity prices")
                 except Exception as e:
                     logger.error(f"Error fetching electricity prices: {e}")
@@ -57,7 +64,7 @@ class ElectricityMonitorService:
             await asyncio.sleep(seconds_until_fetch)
 
             try:
-                self.current_prices = await get_electricity_prices()
+                self.current_prices = await get_electricity_prices(self.client)
                 logger.info("Successfully fetched new electricity prices")
             except Exception as e:
                 logger.error(f"Error fetching electricity prices: {e}")

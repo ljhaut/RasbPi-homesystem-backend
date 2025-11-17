@@ -1,16 +1,25 @@
+from collections.abc import Iterable
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
 import httpx
 import xmltodict
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from core.config import app_settings
 from core.logging_config import setup_logger
-from helpers.elec_prices_helpers import get_today_and_tomorrow_dates
-from models.electricity_price_models import ElectricityPriceResponse, Point
+from db.models import ElectricityPrices
+from helpers.elec_prices_helpers import (
+    calculate_c_per_kwh,
+    get_today_and_tomorrow_dates,
+    position_to_timestamp,
+)
+from models.electricity_price_models import ElectricityPriceResponse, Point, TimeSeries
 
 logger = setup_logger()
 
 
-async def get_electricity_prices() -> ElectricityPriceResponse:
+async def get_electricity_prices(client: httpx.AsyncClient) -> ElectricityPriceResponse:
     today, tomorrow = get_today_and_tomorrow_dates()
 
     payload = {
@@ -23,10 +32,7 @@ async def get_electricity_prices() -> ElectricityPriceResponse:
     }
 
     try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(
-                app_settings.ENTSOE_API_URL, params=payload, timeout=10.0
-            )
+        r = await client.get(app_settings.ENTSOE_API_URL, params=payload, timeout=10.0)
 
         xml_string = r.content.decode("utf-8")
 
@@ -45,8 +51,11 @@ async def get_electricity_prices() -> ElectricityPriceResponse:
 
 
 async def save_electricity_prices_to_db(
-    prices: ElectricityPriceResponse, session: Session
+    prices: ElectricityPriceResponse,
+    session: Session,
 ) -> None:
+    logger.info("Saving electricity prices to database")
+
     document = prices.publication_market_document
     series_list = (
         document.time_series
@@ -54,34 +63,69 @@ async def save_electricity_prices_to_db(
         else [document.time_series]
     )
 
+    new_rows_to_db: list[ElectricityPrices] = []
+
     for series in series_list:
         points = series.period.point
+
+        day = datetime.fromisoformat(
+            series.period.time_interval.end.replace("Z", "+00:00")
+        ).strftime("%Y%m%d")
+
         last_valid_price_amount = None
         i = 0
         while i < len(points):
             position = int(points[i].position)
             price_amount = points[i].price_amount
             last_position = int(points[i - 1].position) if i > 0 else None
-            if position - 1 != last_position:  # if there is a gap in positions
-                if last_valid_price_amount is None:  # no prior valid price to use
+            if i == 0 and position > 1:
+                logger.warning(
+                    f"First position is {position}, expected 1. This shouldn't happen, please check the data."
+                )
+            if (
+                position - 1 != last_position and last_position is not None
+            ):  # if there is a gap in positions
+                if last_valid_price_amount is None:
                     logger.warning(
-                        "Missing position between %s and %s but no prior price is available",
-                        last_position,
-                        position,
+                        f"Missing position between {last_position} and {position}, and no last valid price to fill in."
                     )
                 else:
                     logger.info(
-                        f"Missing position between {last_position} and {position}"
+                        f"Filling missing position between {last_position} and {position} with last valid price {last_valid_price_amount}."
                     )
                     points.insert(  # insert a new point to fill the gap
                         i,
                         Point(
-                            position=str(position - 1),
+                            position=str(last_position - 1),
                             **{"price.amount": last_valid_price_amount},
                         ),
                     )
-                    continue
+                    continue  # re-evaluate the current index after insertion
 
             last_valid_price_amount = price_amount
             i += 1
-            logger.info(f"Processed position {position} with price {price_amount}")
+
+            timestamp = position_to_timestamp(position, day)
+
+            # db transactions
+            price = session.exec(
+                select(ElectricityPrices).where(
+                    ElectricityPrices.timestamp == timestamp
+                )
+            ).first()
+            if price:
+                continue  # skip existing records
+
+            new_rows_to_db.append(
+                ElectricityPrices(
+                    timestamp=timestamp,
+                    price_amount_mwh_eur=price_amount,
+                )
+            )
+
+    if new_rows_to_db:
+        session.add_all(new_rows_to_db)
+        session.commit()
+        logger.info(f"Inserted {len(new_rows_to_db)} new electricity price records.")
+    else:
+        logger.info("No new electricity price records to insert.")
