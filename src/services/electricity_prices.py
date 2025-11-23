@@ -96,7 +96,7 @@ async def save_electricity_prices_to_db(
                     points.insert(  # insert a new point to fill the gap
                         i,
                         Point(
-                            position=str(last_position - 1),
+                            position=str(position - 1),
                             **{"price.amount": last_valid_price_amount},
                         ),
                     )
