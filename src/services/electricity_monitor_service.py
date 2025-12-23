@@ -1,9 +1,8 @@
 import asyncio
-from datetime import datetime, time, timedelta
-from typing import List, Optional
-from zoneinfo import ZoneInfo
+from typing import Optional
 
 import httpx
+from sqlalchemy.exc import OperationalError
 from sqlmodel import select
 
 from controllers.pico_controller import PicoController
@@ -11,8 +10,8 @@ from core.config import app_settings
 from core.logging_config import setup_logger
 from db.base import get_session
 from db.models import ElectricityPrices
-from helpers.common import get_current_point_index, get_current_quarter_timestamp
-from models.electricity_price_models import ElectricityPriceResponse, Point
+from helpers.common import get_current_quarter_timestamp
+from models.electricity_price_models import ElectricityPriceResponse
 from services.electricity_prices import (
     get_electricity_prices,
     save_electricity_prices_to_db,
@@ -21,7 +20,19 @@ from services.electricity_prices import (
 logger = setup_logger()
 
 
+class ElectricityPriceNotFoundError(Exception):
+    """
+    Exception raised when the current electricity price cannot be found in the database.
+    """
+
+    pass
+
+
 class ElectricityMonitorService:
+    """
+    Service to monitor electricity prices and control Pico pins accordingly.
+    """
+
     def __init__(
         self,
         client: httpx.AsyncClient,
@@ -32,50 +43,108 @@ class ElectricityMonitorService:
         self.is_running = False
         self.current_prices: Optional[ElectricityPriceResponse] = None
 
-    async def start(self):
-        """Start the background monitoring service"""
+    async def start(self) -> None:
+        """
+        Start the background monitoring service
+
+        :param self: Instance of ElectricityMonitorService
+        """
         self.is_running = True
         logger.info("Electricity monitor service started.")
 
         await asyncio.gather(self._monitor_prices_task())
 
-    async def stop(self):
-        """Stop the background monitoring service"""
+    async def stop(self) -> None:
+        """
+        Stop the background monitoring service
+
+        :param self: Instance of ElectricityMonitorService
+        """
         self.is_running = False
         logger.info("Electricity monitor service stopped.")
 
-    async def _monitor_prices_task(self):
-        """Monitor current prices and control Pico pins"""
+    async def _monitor_prices_task(self) -> None:
+        """
+        Background task to monitor electricity prices and control Pico pins
+
+        :param self: Instance of ElectricityMonitorService
+        """
         while self.is_running:
-            price = self._get_current_price_c_per_kwh_vat()
-            if price is None:
+            try:
+                price = self._get_current_price_c_per_kwh_vat()
+                # TODO: Use price to control Pico pins
+
+            except ElectricityPriceNotFoundError:
                 logger.warning(
                     "Cannot get current electricity price. Trying to fetch new prices."
                 )
-                await self._fetch_and_save_prices()
+                try:
+                    await self._fetch_and_save_prices()
+                except httpx.HTTPError as e:
+                    logger.error(f"Failed to fetch prices from API: {e}")
+                except OperationalError as e:
+                    logger.error(f"Failed to save prices to DB: {e}")
+                except Exception as e:
+                    logger.error(
+                        f"Unexpected error while fetching and saving prices: {e}"
+                    )
 
             await asyncio.sleep(10)  # Check every 10 seconds
 
-    async def _fetch_and_save_prices(self):
-        """Fetch electricity prices and save them to the database"""
-        try:
-            prices = await get_electricity_prices(self.client)
-            session = next(get_session())
-            await save_electricity_prices_to_db(prices, session)
-        except Exception as e:
-            logger.error(
-                f"Failed to fetch and save electricity prices by electricity_monitor_service: {e}"
-            )
+    async def _fetch_and_save_prices(self) -> None:
+        """
+        Fetch electricity prices from the API and save them to the database
 
-    def _get_current_price_c_per_kwh_vat(self) -> Optional[float]:
-        """Get the current electricity price in cents per kWh including VAT"""
-        session = next(get_session())
+        :param self: Instance of ElectricityMonitorService
+        """
+        prices = await get_electricity_prices(self.client)
+        gen = get_session()
+        session = next(gen)
+        try:
+            save_electricity_prices_to_db(prices, session)
+        finally:
+            # close the generator to exit the session context
+            gen.close()
+
+    def _get_current_price_c_per_kwh_vat(self) -> float:
+        """
+        Get the current electricity price in cents per kWh including VAT
+
+        :param self: Instance of ElectricityMonitorService
+        :return: Current electricity price in cents per kWh including VAT
+        :rtype: float
+        """
+        # Acquire a session from the get_session() generator and ensure it is closed
+        try:
+            gen = get_session()
+            session = next(gen)
+        except Exception as e:
+            logger.error(f"Failed to acquire DB session: {e}")
+            raise ElectricityPriceNotFoundError(
+                "Could not acquire database session"
+            ) from e
 
         timestamp = get_current_quarter_timestamp()
 
-        row = session.exec(
-            select(ElectricityPrices).where(ElectricityPrices.timestamp == timestamp)
-        ).first()
+        try:
+            row = session.exec(
+                select(ElectricityPrices).where(
+                    ElectricityPrices.timestamp == timestamp
+                )
+            ).first()
+        except OperationalError as oe:
+            logger.error(
+                f"Database OperationalError while querying current price: {oe}"
+            )
+            raise ElectricityPriceNotFoundError(f"DB error: {oe}") from oe
+        except Exception as e:
+            logger.error(f"Unexpected error while querying current price: {e}")
+            raise ElectricityPriceNotFoundError(f"Unexpected error: {e}") from e
+        finally:
+            try:
+                gen.close()
+            except Exception:
+                pass
 
         logger.debug(f"Database row for timestamp {timestamp}: {row}")
 
@@ -91,4 +160,6 @@ class ElectricityMonitorService:
             return cents_per_kwh_vat
         else:
             logger.warning(f"No electricity price found for timestamp {timestamp}")
-            return None
+            raise ElectricityPriceNotFoundError(
+                f"No electricity price found for timestamp {timestamp}"
+            )

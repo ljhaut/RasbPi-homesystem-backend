@@ -46,8 +46,8 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: rasbpi-db-user 
-      POSTGRES_PASSWORD: raspbi-db-password
+      POSTGRES_USER: rasbpi-db-user
+      POSTGRES_PASSWORD: rasbpi-db-password
       POSTGRES_DB: rasbpi-db
     volumes:
       - postgres-data:/var/lib/postgresql/data

@@ -10,7 +10,6 @@ from core.config import app_settings
 from core.logging_config import setup_logger
 from db.models import ElectricityPrices
 from helpers.elec_prices_helpers import (
-    calculate_c_per_kwh,
     get_today_and_tomorrow_dates,
     position_to_timestamp,
 )
@@ -20,6 +19,14 @@ logger = setup_logger()
 
 
 async def get_electricity_prices(client: httpx.AsyncClient) -> ElectricityPriceResponse:
+    """
+    Fetch electricity prices from the ENTSOE API
+
+    :param client: HTTPX AsyncClient for making requests
+    :type client: httpx.AsyncClient
+    :return: Instance of ElectricityPriceResponse containing the electricity prices
+    :rtype: ElectricityPriceResponse
+    """
     today, tomorrow = get_today_and_tomorrow_dates()
 
     payload = {
@@ -50,10 +57,18 @@ async def get_electricity_prices(client: httpx.AsyncClient) -> ElectricityPriceR
         raise
 
 
-async def save_electricity_prices_to_db(
+def save_electricity_prices_to_db(
     prices: ElectricityPriceResponse,
     session: Session,
 ) -> None:
+    """
+    Save electricity prices to the database
+
+    :param prices: Instance of ElectricityPriceResponse containing the electricity prices
+    :type prices: ElectricityPriceResponse
+    :param session: Database session for saving the prices
+    :type session: Session
+    """
     logger.info("Saving electricity prices to database")
 
     document = prices.publication_market_document
@@ -124,8 +139,14 @@ async def save_electricity_prices_to_db(
             )
 
     if new_rows_to_db:
-        session.add_all(new_rows_to_db)
-        session.commit()
-        logger.info(f"Inserted {len(new_rows_to_db)} new electricity price records.")
+        try:
+            session.add_all(new_rows_to_db)
+            session.commit()
+            logger.info(
+                f"Inserted {len(new_rows_to_db)} new electricity price records."
+            )
+        except Exception as e:
+            session.rollback()
+            raise e
     else:
         logger.info("No new electricity price records to insert.")

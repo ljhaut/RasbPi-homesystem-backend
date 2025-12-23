@@ -8,7 +8,13 @@ LOG_FORMAT = (
 )
 
 
-def setup_logger():
+def setup_logger() -> logging.Logger:
+    """
+    Setup and return the application logger.
+
+    :return: Configured logger instance
+    :rtype: logging.Logger
+    """
     logger = logging.getLogger("rasbpi-homesystem")
 
     if logger.handlers:
