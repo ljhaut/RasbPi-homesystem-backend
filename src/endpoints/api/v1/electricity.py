@@ -3,11 +3,11 @@ from fastapi import APIRouter, Depends, Request
 from sqlmodel import Session
 
 from db.base import get_session
+from models.electricity_price_models import ElectricityPriceResponse
 from services.electricity_prices import (
     get_electricity_prices,
     save_electricity_prices_to_db,
 )
-from src.models.electricity_price_models import ElectricityPriceResponse
 
 electricity_router = APIRouter(
     prefix="/electricity",

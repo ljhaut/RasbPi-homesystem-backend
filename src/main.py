@@ -25,7 +25,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    if monitor_service and monitor_service.is_running:
+    if monitor_service and monitor_service.status.is_running:
         await monitor_service.stop()
     await app.state.http_client.aclose()
 

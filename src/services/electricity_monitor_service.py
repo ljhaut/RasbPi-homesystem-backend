@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 from typing import Optional
 
 import httpx
@@ -11,6 +12,7 @@ from core.logging_config import setup_logger
 from db.base import get_session
 from db.models import ElectricityPrices
 from helpers.common import get_current_quarter_timestamp
+from models.electricity_monitor_service_status import ElectricityMonitorServiceStatus
 from models.electricity_price_models import ElectricityPriceResponse
 from services.electricity_prices import (
     get_electricity_prices,
@@ -39,9 +41,8 @@ class ElectricityMonitorService:
         pico_controller: Optional[PicoController] = None,
     ):
         self.client = client
-        # self.pico_controller = pico_controller or PicoController()
-        self.is_running = False
-        self.current_prices: Optional[ElectricityPriceResponse] = None
+        self.pico_controller = pico_controller or PicoController()
+        self.status = ElectricityMonitorServiceStatus(is_running=False)
 
     async def start(self) -> None:
         """
@@ -49,7 +50,7 @@ class ElectricityMonitorService:
 
         :param self: Instance of ElectricityMonitorService
         """
-        self.is_running = True
+        self.status.is_running = True
         logger.info("Electricity monitor service started.")
 
         await asyncio.gather(self._monitor_prices_task())
@@ -60,7 +61,7 @@ class ElectricityMonitorService:
 
         :param self: Instance of ElectricityMonitorService
         """
-        self.is_running = False
+        self.status.is_running = False
         logger.info("Electricity monitor service stopped.")
 
     async def _monitor_prices_task(self) -> None:
@@ -69,10 +70,20 @@ class ElectricityMonitorService:
 
         :param self: Instance of ElectricityMonitorService
         """
-        while self.is_running:
+        while self.status.is_running:
             try:
-                price = self._get_current_price_c_per_kwh_vat()
-                # TODO: Use price to control Pico pins
+                price, timestamp = self._get_current_price_c_per_kwh_vat()
+                if price is not None and price != self.status.current_price:
+                    logger.info(
+                        f"Current electricity price: {price} cents/kWh (including VAT) at {timestamp}"
+                    )
+                    # If price is not same as last known price, update control logic
+                    await self._pico_control_logic(price)
+                    self.status.current_price = price
+                else:
+                    logger.debug(
+                        "Current price is the same as last known price. No action taken."
+                    )
 
             except ElectricityPriceNotFoundError:
                 logger.warning(
@@ -106,13 +117,13 @@ class ElectricityMonitorService:
             # close the generator to exit the session context
             gen.close()
 
-    def _get_current_price_c_per_kwh_vat(self) -> float:
+    def _get_current_price_c_per_kwh_vat(self) -> tuple[float, datetime]:
         """
         Get the current electricity price in cents per kWh including VAT
 
         :param self: Instance of ElectricityMonitorService
-        :return: Current electricity price in cents per kWh including VAT
-        :rtype: float
+        :return: Current electricity price in cents per kWh including VAT and the timestamp
+        :rtype: tuple[float, datetime]
         """
         # Acquire a session from the get_session() generator and ensure it is closed
         try:
@@ -154,12 +165,40 @@ class ElectricityMonitorService:
                 1 + app_settings.FINNISH_VAT_PERCENTAGE / 100
             )
             cents_per_kwh_vat = round(eur_per_kwh_vat * 100.0, 2)
-            logger.info(
-                f"Current electricity price at {timestamp}: {cents_per_kwh_vat} cents/kWh (including VAT)"
-            )
-            return cents_per_kwh_vat
+            return cents_per_kwh_vat, timestamp
         else:
             logger.warning(f"No electricity price found for timestamp {timestamp}")
             raise ElectricityPriceNotFoundError(
                 f"No electricity price found for timestamp {timestamp}"
             )
+
+    async def _pico_control_logic(self, price_c: float) -> None:
+        """
+        Control Pico pins based on the current electricity price
+
+        :param self: Instance of ElectricityMonitorService
+        :param price_c: Current electricity price in cents per kWh including VAT
+        """
+        await self._car_charge_logic(price_c)
+
+    async def _car_charge_logic(self, price_c: float):
+        """
+        Control car charging based on the current electricity price
+
+        :param self: Instance of ElectricityMonitorService
+        :param price_c: Current electricity price in cents per kWh including VAT
+        """
+        if price_c < 8.0:
+            if self.status.car_charging:
+                return  # Already charging
+            logger.info(
+                f"Electricity price {price_c} c/kWh is below threshold. Enabling car charging."
+            )
+            await self.pico_controller.turn_on_all_pins(talker_id=1)
+        else:
+            if not self.status.car_charging:
+                return  # Already not charging
+            logger.info(
+                f"Electricity price {price_c} c/kWh is above threshold. Disabling car charging."
+            )
+            await self.pico_controller.turn_off_all_pins(talker_id=1)

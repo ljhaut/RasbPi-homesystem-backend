@@ -17,8 +17,8 @@ class PicoController:
 
         :param self: Instance of the PicoController class
         """
-        self.talker1 = Talker(app_settings.PICO1_PATH)
-        self.talker2 = Talker(app_settings.PICO2_PATH)
+        self.talker1 = Talker(app_settings.PICO1_PATH, id=1)
+        self.talker2 = Talker(app_settings.PICO2_PATH, id=2)
         self.talkers = {
             self.talker1.get_id(): self.talker1,
             self.talker2.get_id(): self.talker2,
@@ -40,9 +40,11 @@ class PicoController:
         :type pin: int
         """
         try:
-            self.talkers[talker_id].send_to_pico(f"turn_on_pin({pin})")
+            response = self.talkers[talker_id].send_to_pico(f"turn_on_pin({pin})")
             self.pin_states[talker_id][pin] = True
-            logger.info(f"Turned ON pin {pin} on talker {talker_id}.")
+            logger.info(
+                f"Turned ON pin {pin} on talker {talker_id}. Response: {response}"
+            )
         except Exception as e:
             logger.error(f"Error turning ON pin {pin} on talker {talker_id}: {e}")
             raise
@@ -58,9 +60,11 @@ class PicoController:
         :type pin: int
         """
         try:
-            self.talkers[talker_id].send_to_pico(f"turn_off_pin({pin})")
+            response = self.talkers[talker_id].send_to_pico(f"turn_off_pin({pin})")
             self.pin_states[talker_id][pin] = False
-            logger.info(f"Turned OFF pin {pin} on talker {talker_id}.")
+            logger.info(
+                f"Turned OFF pin {pin} on talker {talker_id}. Response: {response}"
+            )
         except Exception as e:
             logger.error(f"Error turning OFF pin {pin} on talker {talker_id}: {e}")
             raise
