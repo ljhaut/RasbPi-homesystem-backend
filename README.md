@@ -22,4 +22,4 @@ Make a venv with `python3.13 -m venv .venv`\
 Open venv with `source .venv/bin/activate`\
 Within venv do `pip3 install -r requirements.txt -r manual_reqs.txt`
 
-Create a .env with values from .env.example for the project to run. Fill in nevessary values
+Create a .env with values from .env.example for the project to run. Fill in necessary values
