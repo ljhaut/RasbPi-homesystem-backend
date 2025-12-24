@@ -1,294 +1,63 @@
-import threading
-import requests
-import xmltodict
-import json
+import asyncio
 import time
-import signal
-import sys
-import os
-import logging
+from contextlib import asynccontextmanager
 
-from datetime import datetime, timedelta
-from db import saveData, run_app
-from dotenv import dotenv_values
-from logging.handlers import RotatingFileHandler
+import httpx
+from fastapi import FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 
-if os.getenv('ENVIRONMENT') == 'docker':
-    config = dotenv_values('.env.docker')
-else:
-    config = dotenv_values('.env.local')
+from core.config import app_settings
+from core.logging_config import setup_logger
+from endpoints.api.v1.electricity import electricity_router
+from endpoints.health import health_router
+from services.electricity_monitor_service import ElectricityMonitorService
 
-api_key = config['API_KEY']
-debug = True if config['DEBUG'] == 'True' else False
+logger = setup_logger()
 
-if debug == False:
-    from talker import Talker
 
-def initLogger():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.http_client = httpx.AsyncClient(timeout=60.0)
+    logger.info("HTTP client initialized")
 
-    log_filename = 'app.log'
+    monitor_service = ElectricityMonitorService(app.state.http_client)
+    asyncio.create_task(monitor_service.start())
 
-    if os.path.exists(log_filename):
-        open(log_filename, 'w').close()
+    yield
 
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
+    if monitor_service and monitor_service.status.is_running:
+        await monitor_service.stop()
+    await app.state.http_client.aclose()
 
-    log_file_handler = RotatingFileHandler(log_filename, maxBytes=1000000, backupCount=4)
-    log_file_handler.setLevel(logging.INFO)
 
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    log_file_handler.setFormatter(formatter)
+app = FastAPI(lifespan=lifespan)
 
-    root_logger.addHandler(log_file_handler)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=app_settings.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=app_settings.CORS_METHODS,
+    allow_headers=app_settings.CORS_HEADERS,
+)
 
-    class StdoutLogger(object):
 
-        def __init__(self, logger, level):
-            self.logger = logger
-            self.level = level
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start = time.time()
+    response: Response = await call_next(request)
+    process_time = (time.time() - start) * 1000
 
-        def write(self, msg):
-            if msg.rstrip() != "":
-                self.logger.log(self.level, msg.rstrip())
+    logger.info(
+        f"{request.method} {request.url.path} completed_in={process_time:.2f}ms status_code={response.status_code}"
+    )
 
-        def flush(self):
-            pass
+    return response
 
-    sys.stdout = StdoutLogger(root_logger, logging.INFO)
 
-# Haetaan data Entso-E:n API-rajapinnasta HTTP GET - requestilla, saadaan xml muotoista dataa
-# Parametreina aikaperiodi, jolta halutaan dataa
-def getSPOT(today, tomorrow):
+app.include_router(health_router)
+app.include_router(electricity_router, prefix="/api/v1", tags=["electricity"])
 
-    payload = {'securityToken':api_key,'documentType':'A44','in_Domain':'10YFI-1--------U', 'out_Domain':'10YFI-1--------U',
-    'periodStart': f'{today}0000','periodEnd':f'{tomorrow}0000'}
+if __name__ == "__main__":
+    import uvicorn
 
-    r = requests.get('https://web-api.tp.entsoe.eu/api', params=payload)
-
-    xml_string = r.content.decode('utf-8')
-
-    xml_dict = xmltodict.parse(xml_string)
-    
-    return xml_dict
-
-
-
-# Määritellään ja formatoidaan haluttavat päivämäärät oikein
-def todayTomorrow():
-    today = datetime.now().strftime('%Y%m%d')
-    tomorrow = datetime.now() + timedelta(1)
-    tomorrow = tomorrow.strftime('%Y%m%d')
-    print("Tänään:", today, "Huominen:", tomorrow, '\n')
-    return today, tomorrow
-
-
-
-# Laskee ja esittää päivän sähköhinnan keskiarvon neljältä peräkkäiseltä tunnilta, sekä etsii niistä halvimman ja kalleimman arvon
-# Parametrina lista hinnoista tietyltä päivältä
-def keskiarvot(lista):
-    keskiarvot = []
-
-    for i in range(len(lista)-3):
-        ka = (float(lista[i]['price.amount'])+float(lista[i+1]['price.amount'])+float(lista[i+2]['price.amount'])+float(lista[i+3]['price.amount'])) / 4
-        tunnit = str(int(lista[i]['position'])-1) + '-' + str(int(lista[i+3]['position']))
-
-        keskiarvot.append({'keskiarvo': ka, 'tunnit': tunnit})
-
-    mi = min(keskiarvot, key=lambda x: float(x['keskiarvo']))
-    ma = max(keskiarvot, key=lambda x: float(x['keskiarvo']))
-
-    print("halvin keskiarvo:",mi,"kallein keskiarvo:", ma, '\n')
-
-
-
-# Tallentaa arvot "data.json" tiedostoon
-# Parametreina päivä ja sen päivän arvot
-def tallennaArvot(lista, aika):
-
-    tallennettava = {"pvm": aika, "hinnat": lista}
-
-    print(saveData())
-
-    with open("data.json") as f:
-        file = json.load(f)
-        f.close()
-
-    if not any(d["pvm"] == aika for d in file):
-
-        file.append(tallennettava)
-
-        with open("data.json", "w", encoding="utf-8")as f:
-            json.dump(file, f, ensure_ascii=False, indent=4)
-            f.close()
-        print("Tiedostoon tehty lisäys päivälle", aika, '\n')
-        
-        print(saveData())
-
-    else:
-
-        print("Päivällä", aika, "on jo olemassa listaus tiedostossa", '\n')
-        return
-
-
-# Palauttaa listan arvojen kolme halvinta tuntia
-# tulos: palauttaa listan dictejä halvoista tunneista
-# pos: palauttaa listan tunneista, jolloin halpaa
-def halvimmat(lista):
-    
-    aamu = lista[:8]
-    ilta = lista[8:]
-
-    aamu = sorted(aamu, key=lambda x: float(x['price.amount']), reverse=False)
-    ilta = sorted(ilta, key=lambda x: float(x['price.amount']), reverse=False)
-
-    tulos = [aamu[0], aamu[1], aamu[2], aamu[3], ilta[0], ilta[1]]
-    pos = [aamu[0]['position'], aamu[1]['position'], aamu[2]['position'], aamu[3]['position'], ilta[0]['position'], ilta[1]['position']]
-
-    for i in lista:
-        if float(i['price.amount']) < 0 and i['position'] not in pos:
-            tulos.append(i)
-            pos.append(i['position'])
-
-    print("Päivitetyt halvat tunnit", tulos, pos)
-
-    return tulos, pos
-
-def spotTodTom(spot):
-    if len(spot["Publication_MarketDocument"]["TimeSeries"]) != 2:
-        spotToday = spot["Publication_MarketDocument"]["TimeSeries"]["Period"]["Point"]
-        spotTomorrow = None
-        print(spotToday, '\n')
-    else:
-        spotToday = spot["Publication_MarketDocument"]["TimeSeries"][0]["Period"]["Point"]
-        spotTomorrow = spot["Publication_MarketDocument"]["TimeSeries"][1]["Period"]["Point"]
-        print(spotToday, '\n')
-        print(spotTomorrow, '\n')
-
-    return spotToday, spotTomorrow
-
-if debug == False:
-        talker1 = Talker('/dev/ttyACM0')
-        talker2 = Talker('/dev/ttyACM1')
-
-def cleanup(signal, frame):
-        print("Cleaning up...")
-        if not debug:
-            talker1.send('clean()')
-            talker2.send('clean()')
-            talker1.close()
-            talker2.close()
-        sys.exit(0)
-
-signal.signal(signal.SIGINT, cleanup)
-signal.signal(signal.SIGTERM, cleanup)
-
-def main():
-    
-    initLogger()
-
-    päällä = False
-
-    today, tomorrow = todayTomorrow()
-
-    spot = getSPOT(today, tomorrow)
-    
-    spotToday, spotTomorrow = spotTodTom(spot)
-
-    tallennaArvot(spotToday, today)
-    if spotTomorrow != None:
-        tallennaArvot(spotTomorrow, tomorrow)   
-
-    halvat, halvpos = halvimmat(spotToday)
-
-    try:
-        while True:
-
-            print("\n UUSI KIERROS \n")
-
-            tunti = datetime.now() + timedelta(hours=1)
-            tunti = tunti.replace(minute=0,second=0)
-            pos = tunti.strftime("%H")
-            tunti = tunti.strftime("%D|%H:%M:%S")
-
-            if pos[0] == '0': 
-                pos = pos[1:]
-
-            if pos == '0':
-                pos = '24'
-
-            print("position:", pos)
-            print("seuraava tunti:", tunti)
-            print("aika nyt:", datetime.now().strftime("%D|%H:%M:%S"))
-            print("halvat tunnit:", halvat, halvpos)
-
-            if pos == '1':
-                print("Päivä vaihtui")
-                today, tomorrow = todayTomorrow()
-                if spotTomorrow != None:
-                    spotToday = spotTomorrow
-                    spotTomorrow = None
-                    halvat, halvpos = halvimmat(spotToday)
-
-            if pos == '16':
-                spot = getSPOT(today, tomorrow)
-
-                spotToday, spotTomorrow = spotTodTom(spot)
-                
-                tallennaArvot(spotToday, today)
-                if spotTomorrow != None:
-                    tallennaArvot(spotTomorrow, tomorrow)
-
-            if spotTomorrow == None and int(pos)>=19:
-                print("Huomisen hintoja ei ole vielä saatu, etsitään...")
-                spot = getSPOT(today, tomorrow)
-
-                spotToday, spotTomorrow = spotTodTom(spot)
-                
-                tallennaArvot(spotToday, today)
-                if spotTomorrow != None:
-                    tallennaArvot(spotTomorrow, tomorrow)
-
-            while datetime.now().strftime("%D|%H:%M:%S") < tunti:
-                    
-                # Jos tämän tunnin hinta on halvimpien joukossa, kytketään rele päälle
-                if any(d == pos for d in halvpos):
-
-                    if not päällä:
-                        time.sleep(2)
-                        päällä = True
-                        if debug == False:
-                            try:
-                                talker1.send(f'relaysHigh()')
-                                talker2.send(f'relaysHigh()')
-                                time.sleep(12)
-                                print(talker1.receive())
-                                print(talker2.receive())
-                            except:
-                                talker1.send('clean()')
-                                talker2.send('clean()')
-                                time.sleep(12)
-                                print(talker1.receive())
-                                print(talker2.receive())
-                else:
-                    if päällä:
-                        time.sleep(2)
-                        päällä = False
-                        if debug == False:
-                            talker1.send(f'relaysLow()')
-                            talker2.send(f'relaysLow()')
-                            time.sleep(12)
-                            print(talker1.receive())
-                            print(talker2.receive())
-
-                time.sleep(2)
-    except:
-        print("exit")
-        if debug == False:
-            talker1.send('clean()')
-            talker2.send('clean()')
-
-if __name__ == '__main__':
-    t1 = threading.Thread(target=run_app, daemon=True)
-    t1.start()
-    main()
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True, access_log=False)

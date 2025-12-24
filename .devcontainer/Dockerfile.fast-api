@@ -1,0 +1,17 @@
+FROM python:3.13-slim
+
+WORKDIR /workspace
+
+RUN apt-get update && \
+    apt-get install -y git libpq-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt /temp/requirements.txt
+RUN pip install --no-cache-dir -r /temp/requirements.txt
+RUN rm /temp/requirements.txt
+
+COPY manual_reqs.txt /temp/manual_reqs.txt
+RUN pip install --no-cache-dir -r /temp/manual_reqs.txt
+RUN rm /temp/manual_reqs.txt
+
+COPY . /workspace

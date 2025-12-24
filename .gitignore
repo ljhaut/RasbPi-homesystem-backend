@@ -1,8 +1,8 @@
-config.py
 __pycache__
 data.json
 todo.txt
 private.key
 public.key
-.env.*
+.env
 app.log*
+.venv/
