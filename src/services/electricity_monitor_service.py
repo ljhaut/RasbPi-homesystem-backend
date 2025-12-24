@@ -28,8 +28,6 @@ class ElectricityPriceNotFoundError(Exception):
     Exception raised when the current electricity price cannot be found in the database.
     """
 
-    pass
-
 
 class ElectricityMonitorService:
     """

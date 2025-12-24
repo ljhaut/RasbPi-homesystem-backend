@@ -1,5 +1,4 @@
-from collections.abc import Iterable
-from datetime import datetime, timezone
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -13,7 +12,7 @@ from helpers.elec_prices_helpers import (
     get_today_and_tomorrow_dates,
     position_to_timestamp,
 )
-from models.electricity_price_models import ElectricityPriceResponse, Point, TimeSeries
+from models.electricity_price_models import ElectricityPriceResponse, Point
 
 logger = setup_logger()
 

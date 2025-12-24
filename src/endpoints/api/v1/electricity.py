@@ -15,7 +15,7 @@ electricity_router = APIRouter(
 
 
 @electricity_router.get("/prices")
-async def get_electricity_prices_endpoint(
+async def fetch_and_save_prices(
     req: Request, session: Session = Depends(get_session)
 ) -> ElectricityPriceResponse:
     """
@@ -30,5 +30,5 @@ async def get_electricity_prices_endpoint(
     """
     client: httpx.AsyncClient = req.app.state.http_client
     prices = await get_electricity_prices(client)
-    await save_electricity_prices_to_db(prices, session)
+    save_electricity_prices_to_db(prices, session)
     return prices
