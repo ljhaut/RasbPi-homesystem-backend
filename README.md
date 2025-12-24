@@ -8,15 +8,18 @@ Pico connection serial ports:
 /dev/ttyACM0
 /dev/ttyACM1
 
+## Req file creation:
 pipreqs: `pipreqs . --force --encoding utf-8`
 
+## Database
 alembic:
-- `alembic revision --autogenerate -m "msg"`
-- `alembic upgrade head`
-- `alembic downgrade -1`
+- `alembic revision --autogenerate -m "msg"` create migration file
+- `alembic upgrade head`, migrate up to latest
+- `alembic downgrade -1`, migrate down
 
-For dev make a venv with `python3.13 -m venv .venv`\
+## Local dev
+Make a venv with `python3.13 -m venv .venv`\
 Open venv with `source .venv/bin/activate`\
 Within venv do `pip3 install -r requirements.txt -r manual_reqs.txt`
 
-Create a .env with values from .env.example for the project to run. Fill in the entso-e api key
+Create a .env with values from .env.example for the project to run. Fill in nevessary values
