@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 import httpx
 from sqlalchemy.exc import OperationalError
@@ -13,8 +14,8 @@ from db.base import get_session
 from db.models import ElectricityPrices
 from helpers.common import get_current_quarter_timestamp
 from models.electricity_monitor_service_status import ElectricityMonitorServiceStatus
-from models.electricity_price_models import ElectricityPriceResponse
 from services.electricity_prices import (
+    check_if_tomorrow_prices_exist,
     get_electricity_prices,
     save_electricity_prices_to_db,
 )
@@ -62,6 +63,7 @@ class ElectricityMonitorService:
         :param self: Instance of ElectricityMonitorService
         """
         self.status.is_running = False
+        await self.pico_controller.clean_up()
         logger.info("Electricity monitor service stopped.")
 
     async def _monitor_prices_task(self) -> None:
@@ -71,6 +73,34 @@ class ElectricityMonitorService:
         :param self: Instance of ElectricityMonitorService
         """
         while self.status.is_running:
+            self._new_data_status_check()
+            if not self.status.latest_data_fetched:
+                if self.status.new_data_should_be_available:
+                    try:
+                        gen = get_session()
+                        session = next(gen)
+                        if not check_if_tomorrow_prices_exist(session):
+                            try:
+                                await self._fetch_and_save_prices()
+                                self.status.latest_data_fetched = True
+                                self.status.new_data_should_be_available = False
+                                logger.debug("Fetched and saved tomorrow's prices.")
+                            except httpx.HTTPError as e:
+                                logger.error(f"Failed to fetch prices from API: {e}")
+                            except OperationalError as e:
+                                logger.error(f"Failed to save prices to DB: {e}")
+                            except Exception as e:
+                                logger.error(
+                                    f"Unexpected error while fetching and saving prices: {e}"
+                                )
+                        else:
+                            logger.debug(
+                                "Tomorrow's prices already exist in the database."
+                            )
+                            self.status.latest_data_fetched = True
+                            self.status.new_data_should_be_available = False
+                    finally:
+                        gen.close()
             try:
                 price, timestamp = self._get_current_price_c_per_kwh_vat()
                 if price is not None and price != self.status.current_price:
@@ -99,7 +129,10 @@ class ElectricityMonitorService:
                     logger.error(
                         f"Unexpected error while fetching and saving prices: {e}"
                     )
+            except Exception as e:
+                logger.error(f"Unexpected error in monitoring task: {e}")
 
+            logger.debug(f"Monitor status: {self.status}")
             await asyncio.sleep(10)  # Check every 10 seconds
 
     async def _fetch_and_save_prices(self) -> None:
@@ -172,6 +205,23 @@ class ElectricityMonitorService:
                 f"No electricity price found for timestamp {timestamp}"
             )
 
+    def _new_data_status_check(self) -> None:
+        """
+        If current time is the first quarter of the day, set latest_data_fetched to False.
+        If current time is after 14:00, set new_data_should_be_available to True.
+        """
+        current_time = datetime.now(ZoneInfo("Europe/Helsinki"))
+        if current_time.hour == 0 and current_time.minute < 15:
+            self.status.latest_data_fetched = False
+            self.status.new_data_should_be_available = False
+
+        if (
+            current_time.hour >= 14
+            and not self.status.latest_data_fetched
+            and not self.status.new_data_should_be_available
+        ):
+            self.status.new_data_should_be_available = True
+
     async def _pico_control_logic(self, price_c: float) -> None:
         """
         Control Pico pins based on the current electricity price
@@ -181,20 +231,21 @@ class ElectricityMonitorService:
         """
         await self._car_charge_logic(price_c)
 
-    async def _car_charge_logic(self, price_c: float):
+    async def _car_charge_logic(self, price_c: float) -> None:
         """
         Control car charging based on the current electricity price
 
         :param self: Instance of ElectricityMonitorService
         :param price_c: Current electricity price in cents per kWh including VAT
         """
-        if price_c < 8.0:
+        if price_c < app_settings.CAR_CHARGE_THRESHOLD_C:
             if self.status.car_charging:
                 return  # Already charging
             logger.info(
                 f"Electricity price {price_c} c/kWh is below threshold. Enabling car charging."
             )
             await self.pico_controller.turn_on_all_pins(talker_id=1)
+            self.status.car_charging = True
         else:
             if not self.status.car_charging:
                 return  # Already not charging
@@ -202,3 +253,4 @@ class ElectricityMonitorService:
                 f"Electricity price {price_c} c/kWh is above threshold. Disabling car charging."
             )
             await self.pico_controller.turn_off_all_pins(talker_id=1)
+            self.status.car_charging = False

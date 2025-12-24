@@ -115,6 +115,9 @@ class PicoController:
 
         :param self: Instance of the PicoController class
         """
+        logger.info(
+            "Cleaning up PicoController: turning off all pins and closing connections."
+        )
         for id, talker in self.talkers.items():
             await self.turn_off_all_pins(id)
             talker.close_connection()

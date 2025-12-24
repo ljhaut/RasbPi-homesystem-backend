@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str]
     CORS_METHODS: list[str]
     CORS_HEADERS: list[str]
+    CAR_CHARGE_THRESHOLD_C: float = 8.0
 
     class Config:
         env_file = ".env"

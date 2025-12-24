@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 import xmltodict
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from core.config import app_settings
 from core.logging_config import setup_logger
@@ -150,3 +150,35 @@ def save_electricity_prices_to_db(
             raise e
     else:
         logger.info("No new electricity price records to insert.")
+
+
+def check_if_tomorrow_prices_exist(
+    session: Session,
+) -> bool:
+    """
+    Check if electricity prices for tomorrow exist in the database
+
+    :param session: Database session for querying the prices
+    :type session: Session
+    :return: True if prices for tomorrow exist, False otherwise
+    :rtype: bool
+    """
+    _, tomorrow = get_today_and_tomorrow_dates()
+    tomorrow_date = datetime.strptime(tomorrow, "%Y%m%d").replace(
+        tzinfo=ZoneInfo("Europe/Helsinki")
+    )
+    try:
+        count = session.exec(
+            select(func.count())
+            .select_from(ElectricityPrices)
+            .where(
+                ElectricityPrices.timestamp >= tomorrow_date,
+                ElectricityPrices.timestamp < tomorrow_date.replace(hour=23, minute=59),
+            )
+        ).one()
+    except Exception as e:
+        logger.error(f"Failed to check for tomorrow's prices: {e}")
+        return False
+
+    logger.debug(f"Tomorrow prices count: {count}")
+    return count >= 96  # Assuming 96 quarter-hourly prices for tomorrow
